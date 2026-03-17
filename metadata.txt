@@ -1,0 +1,20 @@
+[general]
+name=SimpliTiles
+description=Fast, parallel XYZ tile generator that bypasses the QGIS rendering pipeline for reliable tile creation from orthomosaics.
+about=Replaces the built-in "Generate XYZ Tiles (Directory)" with a direct GDAL-based pipeline. Supports large orthomosaic GeoTIFFs and JPEGs from Pix4D and similar tools. Automatically selects the optimal parallel strategy based on source format: per-thread GDAL handles for tiled GeoTIFF, or single reader + parallel PNG writes for striped/JPEG. Uses gdal.Warp for correct UTM-to-Web-Mercator tile reprojection. Generates a Leaflet HTML preview for quick QA.
+version=1.0.0
+qgisMinimumVersion=3.4
+qgisMaximumVersion=4.99
+author=Brenton Roesner
+email=info@simplifly.us
+homepage=https://github.com/Bdabest7/SimpliTiles
+repository=https://github.com/Bdabest7/SimpliTiles
+tracker=https://github.com/Bdabest7/SimpliTiles/issues
+hasProcessingProvider=yes
+tags=raster,tiles,xyz,orthomosaic,tiling,parallel,gdal,pix4d
+category=Raster
+icon=icon.png
+experimental=False
+license=MIT
+changelog=
+    1.0.0 - Initial release.

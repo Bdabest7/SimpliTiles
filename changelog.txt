@@ -1,0 +1,13 @@
+Version 1.0.0 (2026-03-17)
+- Complete rewrite: removed GPU/CuPy pipeline (workload is I/O-bound, not compute-bound)
+- Replaced multiprocessing.Pool with ThreadPoolExecutor + threading.local per-thread GDAL handles
+  (multiprocessing caused QGIS to spawn a new GUI instance per worker on Windows)
+- Switched to gdal.Warp per tile for correct UTM-to-Web-Mercator reprojection
+  (previous bounding-box ReadAsArray caused sub-pixel offsets visible as seams at high zoom)
+- Added GRA_Lanczos resampling for sharper output
+- Added Leaflet HTML preview output parameter
+- Blank tiles (outside raster extent) now written as transparent PNGs to match QGIS spec
+- Added detailed performance summary log: source format, overviews, pipeline selected,
+  generation time, total time, tile counts, throughput
+- Added source format auto-detection (tiled vs striped) via GDAL block size inspection
+- CRS fallback: accepts caller-supplied CRS WKT for rasters with no embedded projection (e.g. JPEG)
