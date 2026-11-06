@@ -57,8 +57,7 @@ class TileGenerationPipeline:
     def run(self):
         t_start = time.time()
 
-        # 16 GB GDAL cache shared across threads in this process
-        gdal.SetCacheMax(16 * 1024 * 1024 * 1024)
+        gdal.SetCacheMax(2 * 1024 * 1024 * 1024)
 
         # --- Detect source format ---
         fmt = detect_source_format(self.input_path)
@@ -142,7 +141,6 @@ class TileGenerationPipeline:
 
         tiles_written = 0
         tiles_empty = 0
-        lock = threading.Lock()
 
         def get_reader():
             if not hasattr(thread_local, 'reader'):
@@ -165,26 +163,69 @@ class TileGenerationPipeline:
                 from PIL import Image
                 img = Image.fromarray(rgba, 'RGBA')
                 img.save(tile_path, 'PNG', compress_level=1)
-                return True
+                return True, z
             else:
                 with open(tile_path, 'wb') as f:
                     f.write(blank_bytes)
-                return False
+                return False, z
 
         tiles_done = 0
+        current_zoom = None
+        zoom_start_time = None
+        zoom_start_tiles = 0
+        last_rate_log = time.time()
+        last_rate_tiles = 0
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=self.num_workers) as executor:
             for result in executor.map(process_tile, all_tiles, chunksize=64):
                 if self._is_canceled():
                     cancelled.set()
                     break
-                if result is True:
+                if result is None:
+                    continue
+                had_data, z = result
+                if z != current_zoom:
+                    if current_zoom is not None and zoom_start_time is not None:
+                        dz = time.time() - zoom_start_time
+                        dn = tiles_done - zoom_start_tiles
+                        rate = dn / dz if dz > 0 else 0
+                        self._log(f"  [zoom {current_zoom}] {dn} tiles in {dz:.1f}s ({rate:.1f} t/s)")
+                    current_zoom = z
+                    zoom_start_time = time.time()
+                    zoom_start_tiles = tiles_done
+                if had_data:
                     tiles_written += 1
-                elif result is False:
+                else:
                     tiles_empty += 1
                 tiles_done += 1
                 self._set_progress(100.0 * tiles_done / total)
 
+                now = time.time()
+                if now - last_rate_log >= 10.0:
+                    rate = (tiles_done - last_rate_tiles) / (now - last_rate_log)
+                    self._log(f"  [rate] {tiles_done}/{total} ({100*tiles_done/total:.1f}%) "
+                              f"{rate:.1f} t/s, zoom {current_zoom}")
+                    last_rate_log = now
+                    last_rate_tiles = tiles_done
+
+            if current_zoom is not None and zoom_start_time is not None:
+                dz = time.time() - zoom_start_time
+                dn = tiles_done - zoom_start_tiles
+                rate = dn / dz if dz > 0 else 0
+                self._log(f"  [zoom {current_zoom}] {dn} tiles in {dz:.1f}s ({rate:.1f} t/s)")
+
+            t_close = time.time()
+            self._log(f"  [shutdown] last tile done, closing thread-local readers...")
+
+            def close_reader(_):
+                if hasattr(thread_local, 'reader'):
+                    thread_local.reader.close()
+                    thread_local.reader = None
+
+            list(executor.map(close_reader, range(self.num_workers)))
+            self._log(f"  [shutdown] readers closed ({time.time() - t_close:.2f}s)")
+
+        self._log(f"  [shutdown] thread pool exited ({time.time() - t_close:.2f}s total)")
         return tiles_written, tiles_empty
 
     # ------------------------------------------------------------------
@@ -295,6 +336,7 @@ def generate_leaflet_html(output_dir, west, south, east, north, zoom_min, zoom_m
     <title>SimpliTiles Preview</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer-when-downgrade">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>body{{margin:0;padding:0;}} #map{{position:absolute;top:0;bottom:0;width:100%;}}</style>
@@ -307,8 +349,9 @@ def generate_leaflet_html(output_dir, west, south, east, north, zoom_min, zoom_m
         zoom: {min(zoom_min + 2, zoom_max)},
         minZoom: {zoom_min}, maxZoom: {zoom_max}
     }});
-    L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-        attribution: '&copy; OpenStreetMap contributors', maxZoom: 19, opacity: 0.3
+    L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd', maxZoom: 20, opacity: 0.3
     }}).addTo(map);
     L.tileLayer('file:///{tile_base}/{{z}}/{{x}}/{{y}}.png', {{
         minZoom: {zoom_min}, maxZoom: {zoom_max}, tms: false, opacity: 1.0

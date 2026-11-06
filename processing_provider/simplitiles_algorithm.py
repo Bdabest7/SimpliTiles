@@ -145,6 +145,7 @@ class SimpliTilesAlgorithm(QgsProcessingAlgorithm):
             crs_wkt=crs_wkt,
         )
 
+        import time as _time
         try:
             result = pipeline.run()
         except Exception as e:
@@ -152,19 +153,28 @@ class SimpliTilesAlgorithm(QgsProcessingAlgorithm):
             feedback.reportError(traceback.format_exc())
             raise QgsProcessingException(f"Tile generation failed: {e}")
 
+        t_after_run = _time.time()
+        feedback.pushInfo(f"[post-run] pipeline.run() returned at t={_time.strftime('%H:%M:%S')}")
+
         # Leaflet HTML viewer
         if output_html:
+            t_extent = _time.time()
             if extent_wgs84:
                 west, south, east, north = extent_wgs84
+                feedback.pushInfo(f"[post-run] using provided extent ({_time.time()-t_extent:.2f}s)")
             else:
                 from ..core.raster_reader import RasterReader
                 r = RasterReader(input_path, crs_wkt=crs_wkt)
                 west, south, east, north = r.get_extent_wgs84()
                 r.close()
+                feedback.pushInfo(f"[post-run] reopened raster for extent ({_time.time()-t_extent:.2f}s)")
 
+            t_html = _time.time()
             html = generate_leaflet_html(output_dir, west, south, east, north, zoom_min, zoom_max)
             with open(output_html, 'w', encoding='utf-8') as f:
                 f.write(html)
+            feedback.pushInfo(f"[post-run] html written ({_time.time()-t_html:.2f}s)")
+            feedback.pushInfo(f"[post-run] total post-run time: {_time.time()-t_after_run:.2f}s")
             feedback.pushInfo(f"Leaflet viewer: {output_html}")
 
         return {
