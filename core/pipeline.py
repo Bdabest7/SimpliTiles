@@ -13,6 +13,7 @@ Two execution paths, both using ThreadPoolExecutor (no subprocess/QGIS launch):
     writes (PIL also releases the GIL during compression and file I/O).
 """
 
+import json
 import os
 import time
 import threading
@@ -402,11 +403,39 @@ class TileGenerationPipeline:
         }
 
 
-def generate_leaflet_html(output_dir, west, south, east, north, zoom_min, zoom_max):
-    """Return Leaflet HTML string for a local tile directory."""
+LEAFLET_VERSION = '1.9.4'
+# Subresource Integrity hashes of the pinned Leaflet files on unpkg
+# (sha256, checked against the files served for leaflet@1.9.4).
+LEAFLET_CSS_SRI = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY='
+LEAFLET_JS_SRI = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo='
+
+
+def _tile_url_template(output_dir, html_path):
+    """URL template for the local tiles. Relative to the HTML file when both
+    are on the same drive, so the page does not embed the absolute path of the
+    job folder; an absolute file:// URL otherwise."""
+    out = os.path.abspath(output_dir)
+    if html_path:
+        html_dir = os.path.dirname(os.path.abspath(html_path))
+        try:
+            rel = os.path.relpath(out, html_dir).replace(os.sep, '/')
+            return f"{rel}/{{z}}/{{x}}/{{y}}.png"
+        except ValueError:  # different drives on Windows
+            pass
+    return f"file:///{out.replace(os.sep, '/')}/{{z}}/{{x}}/{{y}}.png"
+
+
+def generate_leaflet_html(output_dir, west, south, east, north, zoom_min, zoom_max,
+                          html_path=None):
+    """Return Leaflet HTML string for a local tile directory.
+
+    This preview is for looking at the tiles on this machine only and must not
+    be delivered: write it outside the tile folder (the algorithm enforces
+    that). Leaflet is loaded from unpkg with integrity hashes.
+    """
     center_lat = (south + north) / 2
     center_lon = (west + east) / 2
-    tile_base = output_dir.replace(os.sep, '/')
+    tile_url = json.dumps(_tile_url_template(output_dir, html_path))
 
     return f"""<!DOCTYPE html>
 <html>
@@ -415,8 +444,10 @@ def generate_leaflet_html(output_dir, west, south, east, north, zoom_min, zoom_m
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer-when-downgrade">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@{LEAFLET_VERSION}/dist/leaflet.css"
+          integrity="{LEAFLET_CSS_SRI}" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@{LEAFLET_VERSION}/dist/leaflet.js"
+            integrity="{LEAFLET_JS_SRI}" crossorigin=""></script>
     <style>body{{margin:0;padding:0;}} #map{{position:absolute;top:0;bottom:0;width:100%;}}</style>
 </head>
 <body>
@@ -431,7 +462,7 @@ def generate_leaflet_html(output_dir, west, south, east, north, zoom_min, zoom_m
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
         subdomains: 'abcd', maxZoom: 20, opacity: 0.3
     }}).addTo(map);
-    L.tileLayer('file:///{tile_base}/{{z}}/{{x}}/{{y}}.png', {{
+    L.tileLayer({tile_url}, {{
         minZoom: {zoom_min}, maxZoom: {zoom_max}, tms: false, opacity: 1.0
     }}).addTo(map);
     map.fitBounds([[{south},{west}],[{north},{east}]]);

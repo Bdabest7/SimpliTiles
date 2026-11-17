@@ -12,6 +12,18 @@ from qgis.core import (
 )
 
 
+def _path_inside(path, folder):
+    """True if path is the same as, or below, folder (False for empty values)."""
+    if not path or not folder:
+        return False
+    try:
+        a = os.path.normcase(os.path.abspath(path))
+        b = os.path.normcase(os.path.abspath(folder))
+        return os.path.commonpath([a, b]) == b
+    except ValueError:  # different drives
+        return False
+
+
 class SimpliTilesAlgorithm(QgsProcessingAlgorithm):
     INPUT_RASTER = 'INPUT_RASTER'
     EXTENT = 'EXTENT'
@@ -96,6 +108,13 @@ class SimpliTilesAlgorithm(QgsProcessingAlgorithm):
         zoom_max = self.parameterAsInt(parameters, self.ZOOM_MAX, context)
         if zoom_max < zoom_min:
             return False, 'Maximum zoom must be >= minimum zoom'
+        # The Leaflet preview must never end up inside the tile folder (it
+        # would be zipped and delivered with the tiles).
+        out_dir = self.parameterAsString(parameters, self.OUTPUT_DIR, context)
+        html = self.parameterAsString(parameters, self.OUTPUT_HTML, context)
+        if _path_inside(html, out_dir):
+            return False, ('The HTML preview must be written outside the tile '
+                           'output folder, so it is never delivered with the tiles')
         return True, ''
 
     def processAlgorithm(self, parameters, context, feedback):
@@ -174,7 +193,8 @@ class SimpliTilesAlgorithm(QgsProcessingAlgorithm):
                 feedback.pushInfo(f"[post-run] reopened raster for extent ({_time.time()-t_extent:.2f}s)")
 
             t_html = _time.time()
-            html = generate_leaflet_html(output_dir, west, south, east, north, zoom_min, zoom_max)
+            html = generate_leaflet_html(output_dir, west, south, east, north, zoom_min, zoom_max,
+                                         html_path=output_html)
             with open(output_html, 'w', encoding='utf-8') as f:
                 f.write(html)
             feedback.pushInfo(f"[post-run] html written ({_time.time()-t_html:.2f}s)")

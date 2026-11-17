@@ -151,6 +151,23 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(od.is_complete(self.out))
         self.assertEqual([n for n in os.listdir(self.tmp.name) if '.previous-' in n or '.partial-' in n], [])
 
+
+    # Finding 11: preview HTML has integrity hashes and no absolute job path; never inside Tiles.
+    def test_finding11_html(self):
+        html_path = os.path.join(self.tmp.name, 'preview.html')
+        html = pl.generate_leaflet_html(self.out, -88.8, 35.6, -88.7, 35.7, 12, 16, html_path=html_path)
+        self.assertIn('integrity="sha256-', html)
+        self.assertEqual(html.count('integrity="sha256-'), 2)
+        self.assertNotIn(self.tmp.name.replace(os.sep, '/'), html)
+        self.assertIn('"Tiles/{z}/{x}/{y}.png"', html)
+
+    def test_finding11_html_not_inside_output(self):
+        from ..processing_provider.simplitiles_algorithm import _path_inside
+        self.assertTrue(_path_inside(os.path.join(self.out, 'p.html'), self.out))
+        self.assertFalse(_path_inside(os.path.join(self.tmp.name, 'p.html'), self.out))
+        self.assertFalse(_path_inside(os.path.join(self.tmp.name, 'Tiles2', 'p.html'), self.out))
+        self.assertFalse(_path_inside('', self.out))
+
     @staticmethod
     def _inside_tile(reader):
         from ..core import tile_math
