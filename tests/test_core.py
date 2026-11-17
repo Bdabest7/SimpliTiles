@@ -89,6 +89,19 @@ class CoreTests(unittest.TestCase):
         self.assertIsNone(reader.read_tile_region(0, 0, 19))
         self.assertIsNotNone(reader.read_tile_region(*self._inside_tile(reader)))
 
+
+    # Finding 6: a cancelled run raises; it must not report success.
+    def test_finding6_cancel_raises_multi_reader(self):
+        fb = Feedback(cancel_after=2)
+        with self.assertRaises(pl.TileGenerationCancelled):
+            self.run_pipeline(workers=2, zmin=18, zmax=21, feedback=fb)
+
+    def test_finding6_cancel_raises_single_reader(self):
+        make_raster(self.src, tiled=False)
+        fb = Feedback(cancel_after=2)
+        with self.assertRaises(pl.TileGenerationCancelled):
+            self.run_pipeline(workers=2, zmin=18, zmax=21, feedback=fb)
+
     @staticmethod
     def _inside_tile(reader):
         from ..core import tile_math

@@ -146,8 +146,12 @@ class SimpliTilesAlgorithm(QgsProcessingAlgorithm):
         )
 
         import time as _time
+        from ..core.pipeline import TileGenerationCancelled
         try:
             result = pipeline.run()
+        except TileGenerationCancelled as e:
+            # Cancelling is a failure, not a success with a partial tile set.
+            raise QgsProcessingException(f"Tile generation cancelled: {e}")
         except Exception as e:
             import traceback
             feedback.reportError(traceback.format_exc())

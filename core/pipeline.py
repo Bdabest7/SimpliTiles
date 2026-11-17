@@ -25,6 +25,11 @@ from .tile_math import tiles_in_extent, count_tiles
 from .source_prep import detect_source_format
 
 
+class TileGenerationCancelled(RuntimeError):
+    """The user cancelled the run. A cancelled run is a failed run: it must
+    never be reported as a success with a half-written tile set."""
+
+
 class _SetOnError:
     """Context manager: set an Event when the block exits with an exception."""
 
@@ -263,6 +268,9 @@ class TileGenerationPipeline:
         # The pool has exited, so no thread is using a reader any more.
         self._log(f"  [shutdown] thread pool exited and readers closed "
                   f"({time.time() - t_close:.2f}s)")
+        if cancelled.is_set() or self._is_canceled():
+            raise TileGenerationCancelled(
+                f"Cancelled after {tiles_done} of {total} tiles")
         return tiles_written, tiles_empty
 
     # ------------------------------------------------------------------
@@ -311,23 +319,29 @@ class TileGenerationPipeline:
                 self._set_progress(100.0 * tiles_done / total)
                 del futures_dict[fut]
 
-        with concurrent.futures.ThreadPoolExecutor(
-                max_workers=self.num_workers) as executor:
-            for z, x, y in all_tiles:
-                if self._is_canceled():
-                    break
-                if len(pending) >= max_inflight:
-                    drain(pending)
+        was_cancelled = False
+        try:
+            with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=self.num_workers) as executor:
+                for z, x, y in all_tiles:
+                    if self._is_canceled():
+                        was_cancelled = True
+                        break
+                    if len(pending) >= max_inflight:
+                        drain(pending)
 
-                tile_data = reader.read_tile_region(x, y, z, self.tile_size)
-                fut = executor.submit(write_task, z, x, y, tile_data)
-                pending[fut] = True
+                    tile_data = reader.read_tile_region(x, y, z, self.tile_size)
+                    fut = executor.submit(write_task, z, x, y, tile_data)
+                    pending[fut] = True
 
-            # Drain remaining
-            if pending:
-                drain(pending, wait_for=concurrent.futures.ALL_COMPLETED)
-
-        reader.close()
+                # Drain remaining (also after a cancel, so no write is left half done)
+                if pending:
+                    drain(pending, wait_for=concurrent.futures.ALL_COMPLETED)
+        finally:
+            reader.close()
+        if was_cancelled or self._is_canceled():
+            raise TileGenerationCancelled(
+                f"Cancelled after {tiles_done} of {total} tiles")
         return tiles_written, tiles_empty
 
     # ------------------------------------------------------------------
