@@ -25,6 +25,39 @@ from .tile_math import tiles_in_extent, count_tiles
 from .source_prep import detect_source_format
 
 
+class _SetOnError:
+    """Context manager: set an Event when the block exits with an exception."""
+
+    def __init__(self, event):
+        self.event = event
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            self.event.set()
+        return False
+
+
+class _CloseAll:
+    """Context manager: close every object in a list on exit."""
+
+    def __init__(self, items):
+        self.items = items
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        for item in list(self.items):
+            try:
+                item.close()
+            except Exception:
+                pass
+        return False
+
+
 class TileGenerationPipeline:
     def __init__(self, input_path, output_dir, zoom_min, zoom_max,
                  tile_size=256, num_workers=16,
@@ -142,11 +175,14 @@ class TileGenerationPipeline:
         tiles_written = 0
         tiles_empty = 0
 
+        opened_readers = []
+
         def get_reader():
-            if not hasattr(thread_local, 'reader'):
+            if getattr(thread_local, 'reader', None) is None:
                 thread_local.reader = RasterReader(
                     self.input_path, crs_wkt=self.crs_wkt
                 )
+                opened_readers.append(thread_local.reader)  # list.append is atomic
             return thread_local.reader
 
         def process_tile(args):
@@ -175,8 +211,15 @@ class TileGenerationPipeline:
         zoom_start_tiles = 0
         last_rate_log = time.time()
         last_rate_tiles = 0
-        with concurrent.futures.ThreadPoolExecutor(
-                max_workers=self.num_workers) as executor:
+        # Exit order is reverse: stop pending tiles on any error, let the pool
+        # drain, then close every reader that was opened. Closing here (not
+        # in per-thread cleanup tasks) means a worker that never ran a tile,
+        # or a run that failed half way, can neither crash the cleanup nor
+        # leak file handles (finding 17).
+        with _CloseAll(opened_readers), \
+                concurrent.futures.ThreadPoolExecutor(
+                    max_workers=self.num_workers) as executor, \
+                _SetOnError(cancelled):
             for result in executor.map(process_tile, all_tiles, chunksize=64):
                 if self._is_canceled():
                     cancelled.set()
@@ -215,17 +258,11 @@ class TileGenerationPipeline:
                 self._log(f"  [zoom {current_zoom}] {dn} tiles in {dz:.1f}s ({rate:.1f} t/s)")
 
             t_close = time.time()
-            self._log(f"  [shutdown] last tile done, closing thread-local readers...")
+            self._log("  [shutdown] last tile done, waiting for the pool...")
 
-            def close_reader(_):
-                if hasattr(thread_local, 'reader'):
-                    thread_local.reader.close()
-                    thread_local.reader = None
-
-            list(executor.map(close_reader, range(self.num_workers)))
-            self._log(f"  [shutdown] readers closed ({time.time() - t_close:.2f}s)")
-
-        self._log(f"  [shutdown] thread pool exited ({time.time() - t_close:.2f}s total)")
+        # The pool has exited, so no thread is using a reader any more.
+        self._log(f"  [shutdown] thread pool exited and readers closed "
+                  f"({time.time() - t_close:.2f}s)")
         return tiles_written, tiles_empty
 
     # ------------------------------------------------------------------
