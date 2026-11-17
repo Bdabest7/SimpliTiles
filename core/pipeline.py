@@ -25,6 +25,7 @@ from osgeo import gdal
 from .tile_math import tiles_in_extent, count_tiles
 from .source_prep import detect_source_format
 from . import output_dir as output_dir_mod
+from .gdal_env import gdal_settings
 
 
 DEFAULT_MAX_TILES_PER_RUN = 1_000_000
@@ -127,9 +128,14 @@ class TileGenerationPipeline:
             self.feedback.setProgress(int(pct))
 
     def run(self):
+        # GDAL exceptions and the 2 GB cache apply only while this run is
+        # going; the previous settings are restored afterwards (finding 15).
+        with gdal_settings(cache_bytes=2 * 1024 * 1024 * 1024, exceptions=True):
+            return self._run()
+
+    def _run(self):
         t_start = time.time()
 
-        gdal.SetCacheMax(2 * 1024 * 1024 * 1024)
 
         # --- Detect source format ---
         fmt = detect_source_format(self.input_path)

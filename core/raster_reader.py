@@ -3,7 +3,6 @@ from osgeo import gdal, osr
 
 from . import tile_math
 
-gdal.UseExceptions()
 
 
 class RasterReader:

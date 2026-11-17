@@ -198,9 +198,11 @@ class SimpliTilesAlgorithm(QgsProcessingAlgorithm):
                 feedback.pushInfo(f"[post-run] using provided extent ({_time.time()-t_extent:.2f}s)")
             else:
                 from ..core.raster_reader import RasterReader
-                r = RasterReader(input_path, crs_wkt=crs_wkt)
-                west, south, east, north = r.get_extent_wgs84()
-                r.close()
+                from ..core.gdal_env import gdal_settings
+                with gdal_settings():
+                    r = RasterReader(input_path, crs_wkt=crs_wkt)
+                    west, south, east, north = r.get_extent_wgs84()
+                    r.close()
                 feedback.pushInfo(f"[post-run] reopened raster for extent ({_time.time()-t_extent:.2f}s)")
 
             t_html = _time.time()

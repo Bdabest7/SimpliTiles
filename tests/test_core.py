@@ -206,6 +206,26 @@ class CoreTests(unittest.TestCase):
             with self.assertRaises(ImportError):
                 deps.require_dependencies()
 
+
+    # Finding 15: GDAL cache size and exception mode are restored after a run.
+    def test_finding15_gdal_settings_restored(self):
+        gdal.DontUseExceptions()
+        gdal.SetCacheMax(123 * 1024 * 1024)
+        self.run_pipeline(workers=2, zmin=18, zmax=19)
+        self.assertEqual(gdal.GetCacheMax(), 123 * 1024 * 1024)
+        self.assertFalse(gdal.GetUseExceptions())
+
+    def test_finding15_restored_after_failure(self):
+        gdal.DontUseExceptions()
+        before = gdal.GetCacheMax()
+        with mock.patch.object(rr.gdal, 'Warp', new=_failing_warp):
+            try:
+                self.run_pipeline(workers=2)
+            except RuntimeError:
+                pass
+        self.assertEqual(gdal.GetCacheMax(), before)
+        self.assertFalse(gdal.GetUseExceptions())
+
     @staticmethod
     def _inside_tile(reader):
         from ..core import tile_math
