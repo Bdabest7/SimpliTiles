@@ -23,6 +23,7 @@ from osgeo import gdal
 
 from .tile_math import tiles_in_extent, count_tiles
 from .source_prep import detect_source_format
+from . import output_dir as output_dir_mod
 
 
 class TileGenerationCancelled(RuntimeError):
@@ -76,6 +77,8 @@ class TileGenerationPipeline:
         self.extent_wgs84 = extent_wgs84
         self.feedback = feedback
         self.crs_wkt = crs_wkt
+        self.work_dir = None  # partial sibling folder, set in run()
+        self.previous_dir = None  # an older output folder renamed aside, if any
 
     def _log(self, msg):
         if self.feedback:
@@ -136,24 +139,48 @@ class TileGenerationPipeline:
             for _, x, y in tiles_in_extent(west, south, east, north, z)
         ]
 
+        # --- Write into a partial sibling folder; published only on success ---
+        self.work_dir = output_dir_mod.partial_dir_for(self.output_dir)
+        os.makedirs(self.work_dir)
+        self._log(f"Writing to partial folder {self.work_dir} (renamed to the output folder when complete)")
+
         # --- Pre-create output directories ---
         t_dirs = time.time()
         seen = set()
         for z, x, _ in all_tiles:
             k = (z, x)
             if k not in seen:
-                os.makedirs(os.path.join(self.output_dir, str(z), str(x)), exist_ok=True)
+                os.makedirs(os.path.join(self.work_dir, str(z), str(x)), exist_ok=True)
                 seen.add(k)
         self._log(f"Directories pre-created ({time.time() - t_dirs:.2f}s)")
 
         # --- Choose pipeline ---
         t_gen = time.time()
-        if fmt['tiled']:
-            pipeline_name = f"Multi-reader threads ({self.num_workers} threads, per-thread GDAL handle)"
-            tiles_written, tiles_empty = self._run_multi_reader(all_tiles, total_tiles)
-        else:
-            pipeline_name = f"Single-reader + {self.num_workers} writer threads"
-            tiles_written, tiles_empty = self._run_single_reader(all_tiles, total_tiles)
+        try:
+            if fmt['tiled']:
+                pipeline_name = f"Multi-reader threads ({self.num_workers} threads, per-thread GDAL handle)"
+                tiles_written, tiles_empty = self._run_multi_reader(all_tiles, total_tiles)
+            else:
+                pipeline_name = f"Single-reader + {self.num_workers} writer threads"
+                tiles_written, tiles_empty = self._run_single_reader(all_tiles, total_tiles)
+        except BaseException:
+            self._log_error(
+                f"Run did not complete. Incomplete tiles were left in {self.work_dir}; "
+                f"the output folder {self.output_dir} was not touched by this run.")
+            raise
+
+        # --- Complete: manifest last, then rename into place ---
+        output_dir_mod.write_manifest(self.work_dir, {
+            'input': self.input_path,
+            'zoom_min': self.zoom_min, 'zoom_max': self.zoom_max,
+            'tile_size': self.tile_size,
+            'extent_wgs84': [west, south, east, north],
+            'tiles_written': tiles_written, 'tiles_empty': tiles_empty,
+        })
+        aside = output_dir_mod.publish(self.work_dir, self.output_dir, self._log)
+        self._log(f"Tiles complete: {self.output_dir} "
+                  f"(manifest {output_dir_mod.MANIFEST_NAME})")
+        self.previous_dir = aside
 
         elapsed_gen = time.time() - t_gen
         elapsed_total = time.time() - t_start
@@ -197,7 +224,7 @@ class TileGenerationPipeline:
 
             reader = get_reader()
             tile_data = reader.read_tile_region(x, y, z, self.tile_size)
-            tile_path = os.path.join(self.output_dir, str(z), str(x), f"{y}.png")
+            tile_path = os.path.join(self.work_dir, str(z), str(x), f"{y}.png")
 
             if tile_data is not None:
                 rgba = np.transpose(tile_data, (1, 2, 0))
@@ -292,7 +319,7 @@ class TileGenerationPipeline:
         pending = {}
 
         def write_task(z, x, y, tile_data):
-            tile_path = os.path.join(self.output_dir, str(z), str(x), f"{y}.png")
+            tile_path = os.path.join(self.work_dir, str(z), str(x), f"{y}.png")
             if tile_data is not None:
                 rgba = np.transpose(tile_data, (1, 2, 0))
                 from PIL import Image

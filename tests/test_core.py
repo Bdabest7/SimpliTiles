@@ -102,6 +102,55 @@ class CoreTests(unittest.TestCase):
         with self.assertRaises(pl.TileGenerationCancelled):
             self.run_pipeline(workers=2, zmin=18, zmax=21, feedback=fb)
 
+
+    # Finding 4: output appears only when complete, with a manifest; old output is kept aside.
+    def test_finding4_success_publishes_with_manifest(self):
+        self.run_pipeline(workers=2, zmin=18, zmax=19)
+        self.assertTrue(os.path.isdir(self.out))
+        from ..core import output_dir as od
+        self.assertTrue(od.is_complete(self.out))
+        import json
+        with open(os.path.join(self.out, od.MANIFEST_NAME)) as f:
+            m = json.load(f)
+        self.assertEqual(m['tile_count'], len(m['files']))
+        for ent in m['files']:
+            self.assertTrue(os.path.isfile(os.path.join(self.out, ent['path'])))
+        leftovers = [n for n in os.listdir(self.tmp.name) if '.partial-' in n]
+        self.assertEqual(leftovers, [])
+
+    def test_finding4_failure_leaves_no_output_folder(self):
+        failed = False
+        with mock.patch.object(rr.gdal, 'Warp', new=_failing_warp):
+            try:
+                self.run_pipeline(workers=2)
+            except RuntimeError:
+                failed = True
+        self.assertTrue(failed)
+        self.assertFalse(os.path.exists(self.out))
+        self.assertEqual(len([n for n in os.listdir(self.tmp.name) if '.partial-' in n]), 1)
+
+    def test_finding4_cancel_leaves_no_output_folder(self):
+        with self.assertRaises(pl.TileGenerationCancelled):
+            self.run_pipeline(workers=2, zmin=18, zmax=21, feedback=Feedback(cancel_after=2))
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_finding4_old_output_is_moved_aside_not_mixed(self):
+        os.makedirs(os.path.join(self.out, '5', '1'))
+        stale = os.path.join(self.out, '5', '1', '1.png')
+        open(stale, 'wb').write(b'old')
+        self.run_pipeline(workers=2, zmin=18, zmax=19)
+        self.assertFalse(os.path.exists(os.path.join(self.out, '5')))
+        prev = [n for n in os.listdir(self.tmp.name) if '.previous-' in n]
+        self.assertEqual(len(prev), 1)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp.name, prev[0], '5', '1', '1.png')))
+
+    def test_finding4_empty_existing_folder_is_filled(self):
+        os.makedirs(self.out)
+        self.run_pipeline(workers=2, zmin=18, zmax=19)
+        from ..core import output_dir as od
+        self.assertTrue(od.is_complete(self.out))
+        self.assertEqual([n for n in os.listdir(self.tmp.name) if '.previous-' in n or '.partial-' in n], [])
+
     @staticmethod
     def _inside_tile(reader):
         from ..core import tile_math
