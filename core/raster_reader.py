@@ -93,6 +93,10 @@ class RasterReader:
 
         merc_xmin, merc_ymin, merc_xmax, merc_ymax = tile_math.tile_bounds_mercator(x, y, z)
 
+        # Only a tile outside the raster returns None (above). Any error from
+        # here on is a real failure and must stop the run: swallowing it would
+        # write a blank tile and still report success.
+        tile_id = f"z{z}/x{x}/y{y}"
         try:
             warp_ds = gdal.Warp(
                 '',
@@ -106,17 +110,27 @@ class RasterReader:
                 resampleAlg=gdal.GRA_Lanczos,
                 multithread=False,
             )
-        except Exception:
-            return None
+        except Exception as e:
+            raise RuntimeError(
+                f"Reading tile {tile_id} from {self.filepath} failed: {e}") from e
 
         if warp_ds is None:
-            return None
+            raise RuntimeError(
+                f"Reading tile {tile_id} from {self.filepath} failed: "
+                f"gdal.Warp returned nothing ({gdal.GetLastErrorMsg()})")
 
-        data = warp_ds.ReadAsArray()
-        warp_ds = None  # release in-memory dataset
+        try:
+            data = warp_ds.ReadAsArray()
+        except Exception as e:
+            raise RuntimeError(
+                f"Reading tile {tile_id} from {self.filepath} failed: {e}") from e
+        finally:
+            warp_ds = None  # release in-memory dataset
 
         if data is None:
-            return None
+            raise RuntimeError(
+                f"Reading tile {tile_id} from {self.filepath} failed: "
+                f"no pixel data returned")
         if data.ndim == 2:
             data = data[np.newaxis]
 
@@ -137,7 +151,9 @@ class RasterReader:
             if self.nodata[0] is not None:
                 result[3][data[0] == self.nodata[0]] = 0
         else:
-            return None
+            raise RuntimeError(
+                f"Reading tile {tile_id}: unexpected band count {data.shape[0]} "
+                f"in {self.filepath}")
 
         return result
 
