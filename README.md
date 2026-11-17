@@ -29,13 +29,13 @@ Tested on a 49,058 × 65,126 px JPEG-compressed GeoTIFF (Pix4D Matic 2.0.2, EPSG
 
 - QGIS 3.4 or later (tested on 4.0)
 - GDAL 3.x (bundled with QGIS)
-- Pillow ≥ 9.0
+- Pillow 12.1.1 (pinned in `requirements.txt`; the version this plugin was tested with)
 
 Install Pillow into the QGIS Python environment if not already present:
 
 ```
 # Windows — find QGIS Python, then:
-"C:\Program Files\QGIS 4.0.0\apps\Python312\python.exe" -m pip install Pillow
+"C:\Program Files\QGIS 4.0.0\apps\Python312\python.exe" -m pip install -r requirements.txt
 ```
 
 ## Installation

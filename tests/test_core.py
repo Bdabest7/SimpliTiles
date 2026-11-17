@@ -192,6 +192,20 @@ class CoreTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=str(bad)):
                 pl.validate_extent_wgs84(bad)
 
+
+    # Finding 14: dependency check reports versions and names what is missing.
+    def test_finding14_deps(self):
+        from ..core import deps
+        problems, notes = deps.check_dependencies()
+        self.assertEqual(problems, [])
+        self.assertTrue(any(n.startswith('Pillow') for n in notes))
+        with mock.patch.dict('sys.modules', {'PIL': None}):
+            problems, _ = deps.check_dependencies()
+        self.assertTrue(any('Pillow' in p for p in problems))
+        with mock.patch.dict('sys.modules', {'PIL': None}):
+            with self.assertRaises(ImportError):
+                deps.require_dependencies()
+
     @staticmethod
     def _inside_tile(reader):
         from ..core import tile_math

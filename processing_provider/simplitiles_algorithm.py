@@ -124,6 +124,12 @@ class SimpliTilesAlgorithm(QgsProcessingAlgorithm):
 
         if not raster_layer.isValid():
             raise QgsProcessingException('Input raster layer is not valid or cannot be read')
+        from ..core.deps import require_dependencies
+        try:
+            for note in require_dependencies():
+                feedback.pushDebugInfo(note)
+        except ImportError as e:
+            raise QgsProcessingException(str(e))
         input_path = raster_layer.source()
         zoom_min = self.parameterAsInt(parameters, self.ZOOM_MIN, context)
         zoom_max = self.parameterAsInt(parameters, self.ZOOM_MAX, context)
