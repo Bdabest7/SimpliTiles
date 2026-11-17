@@ -168,6 +168,30 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(_path_inside(os.path.join(self.tmp.name, 'Tiles2', 'p.html'), self.out))
         self.assertFalse(_path_inside('', self.out))
 
+
+    # Finding 13: bad extent and runaway tile counts are rejected before anything is written.
+    def test_finding13_tile_cap(self):
+        with mock.patch.dict(os.environ, {'SIMPLITILES_MAX_TILES': '3'}):
+            msg = None
+            try:
+                self.run_pipeline(workers=2, zmin=18, zmax=21)
+            except ValueError as e:
+                msg = str(e)
+        self.assertIn('limit of 3', msg or '')
+        self.assertEqual([n for n in os.listdir(self.tmp.name) if 'partial' in n or n == 'Tiles'], [])
+
+    def test_finding13_bad_env_value(self):
+        with mock.patch.dict(os.environ, {'SIMPLITILES_MAX_TILES': 'lots'}):
+            with self.assertRaises(ValueError):
+                pl.max_tiles_per_run()
+
+    def test_finding13_extent_validation(self):
+        pl.validate_extent_wgs84((-88.9, 35.6, -88.8, 35.7))
+        for bad in [(-88.8, 35.6, -88.9, 35.7), (0, 0, 0, 1), (-200, 0, 10, 10),
+                    (float('nan'), 0, 1, 1), (1e6, 1e6, 2e6, 2e6)]:
+            with self.assertRaises(ValueError, msg=str(bad)):
+                pl.validate_extent_wgs84(bad)
+
     @staticmethod
     def _inside_tile(reader):
         from ..core import tile_math

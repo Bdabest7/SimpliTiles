@@ -122,6 +122,8 @@ class SimpliTilesAlgorithm(QgsProcessingAlgorithm):
         if raster_layer is None:
             raise QgsProcessingException('Invalid input raster layer')
 
+        if not raster_layer.isValid():
+            raise QgsProcessingException('Input raster layer is not valid or cannot be read')
         input_path = raster_layer.source()
         zoom_min = self.parameterAsInt(parameters, self.ZOOM_MIN, context)
         zoom_max = self.parameterAsInt(parameters, self.ZOOM_MAX, context)
@@ -139,6 +141,9 @@ class SimpliTilesAlgorithm(QgsProcessingAlgorithm):
                 parameters, self.EXTENT, context,
                 QgsCoordinateReferenceSystem('EPSG:4326')
             )
+            if extent.isNull() or extent.isEmpty():
+                raise QgsProcessingException(
+                    f"Extent '{extent_param}' is empty or could not be read")
             extent_wgs84 = (
                 extent.xMinimum(), extent.yMinimum(),
                 extent.xMaximum(), extent.yMaximum(),

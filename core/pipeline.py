@@ -27,6 +27,36 @@ from .source_prep import detect_source_format
 from . import output_dir as output_dir_mod
 
 
+DEFAULT_MAX_TILES_PER_RUN = 1_000_000
+
+
+def max_tiles_per_run():
+    """Upper limit of tiles in one run. A typical golf course at zoom 12-21 is
+    a few thousand tiles. Override with the SIMPLITILES_MAX_TILES environment
+    variable (a positive integer); an unreadable value is an error, not ignored."""
+    raw = os.environ.get('SIMPLITILES_MAX_TILES', '').strip()
+    if not raw:
+        return DEFAULT_MAX_TILES_PER_RUN
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"SIMPLITILES_MAX_TILES is not an integer: {raw!r}")
+    if value < 1:
+        raise ValueError(f"SIMPLITILES_MAX_TILES must be at least 1, got {value}")
+    return value
+
+
+def validate_extent_wgs84(extent):
+    """Raise ValueError unless extent is (west, south, east, north) in valid WGS84 order."""
+    west, south, east, north = extent
+    vals = (west, south, east, north)
+    if any(v != v or abs(v) == float('inf') for v in vals):
+        raise ValueError(f"Extent contains an invalid number: {extent}")
+    if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
+        raise ValueError(
+            f"Extent is empty or outside the world (west {west}, south {south}, "
+            f"east {east}, north {north}); check the extent and its CRS")
+
 class TileGenerationCancelled(RuntimeError):
     """The user cancelled the run. A cancelled run is a failed run: it must
     never be reported as a success with a half-written tile set."""
@@ -119,6 +149,7 @@ class TileGenerationPipeline:
             self.extent_wgs84 if self.extent_wgs84
             else reader.get_extent_wgs84()
         )
+        validate_extent_wgs84((west, south, east, north))
         self._log(f"Extent (WGS84): W={west:.6f} S={south:.6f} E={east:.6f} N={north:.6f}")
         reader.close()
 
@@ -129,6 +160,13 @@ class TileGenerationPipeline:
             total_tiles += cnt
             self._log(f"  Zoom {z}: {cnt} tiles")
         self._log(f"Total: {total_tiles} tiles")
+        max_tiles = max_tiles_per_run()
+        if total_tiles > max_tiles:
+            raise ValueError(
+                f"{total_tiles} tiles requested, more than the limit of {max_tiles} "
+                f"per run. Lower the maximum zoom or use a smaller extent "
+                f"(the limit can be raised with the SIMPLITILES_MAX_TILES "
+                f"environment variable).")
 
         if total_tiles == 0:
             self._log("No tiles to generate.")
